@@ -189,7 +189,7 @@ def handle_get_flight(server, request: Request) -> Response:
 
 
 def handle_open_flight(server, request: Request) -> Response:
-    return json_response(_plant(server).book.open(request.param("id")).as_dict())
+    return json_response(_plant(server).reopen_flight(request.param("id")).as_dict())
 
 
 def handle_board_flight(server, request: Request) -> Response:
@@ -197,7 +197,25 @@ def handle_board_flight(server, request: Request) -> Response:
 
 
 def handle_cutoff_flight(server, request: Request) -> Response:
-    return json_response(_plant(server).book.cutoff(request.param("id")).as_dict())
+    plant = _plant(server)
+    flight_id = request.param("id")
+    mark = plant.soft_cutoff(flight_id)
+    return json_response(
+        {"flight": plant.book.get(flight_id).as_dict(), "mark": mark.as_dict()}
+    )
+
+
+def handle_hard_cutoff_flight(server, request: Request) -> Response:
+    return json_response(_plant(server).hard_cutoff(request.param("id")).as_dict())
+
+
+def handle_cutoff_status(server, request: Request) -> Response:
+    return json_response(_plant(server).cutoff_status(request.param("id")))
+
+
+def handle_cutoff_review(server, request: Request) -> Response:
+    entries = _plant(server).cutoff_review(request.param("id"))
+    return json_response([entry.as_dict() for entry in entries])
 
 
 def handle_close_flight(server, request: Request) -> Response:

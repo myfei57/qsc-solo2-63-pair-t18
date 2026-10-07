@@ -56,14 +56,8 @@ class FlightBook:
             if bags[key].flight_id == flight_id
         ]
 
-    def open(self, flight_id: str) -> Flight:
-        return self._transition(flight_id, FlightState.OPEN)
-
     def board(self, flight_id: str) -> Flight:
         return self._transition(flight_id, FlightState.BOARDING)
-
-    def cutoff(self, flight_id: str) -> Flight:
-        return self._transition(flight_id, FlightState.CUTOFF)
 
     def mark_closed(self, flight_id: str) -> Flight:
         flight = self.get(flight_id)
@@ -109,6 +103,7 @@ class FlightBook:
         self.get(flight_id)
         with self._store.session() as session:
             session.state.flights.pop(flight_id, None)
+            session.state.cutoffs.pop(flight_id, None)
             session.state.mappings = {
                 bag_id: mapped
                 for bag_id, mapped in session.state.mappings.items()

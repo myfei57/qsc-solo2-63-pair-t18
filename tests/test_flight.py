@@ -44,7 +44,7 @@ def test_state_transitions_and_open_filter(plant, flight):
     assert plant.book.open_flights() == [plant.book.get(flight.id)]
     plant.book.board(flight.id)
     assert plant.book.get(flight.id).state is FlightState.BOARDING
-    plant.book.cutoff(flight.id)
+    plant.soft_cutoff(flight.id)
     assert plant.book.open_flights() == []
     with pytest.raises(OrderingError):
         plant.book.require_open(flight.id)

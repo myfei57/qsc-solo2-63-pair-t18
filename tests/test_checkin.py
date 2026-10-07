@@ -19,8 +19,8 @@ def test_check_in_commits_and_injects(plant, flight):
 
 
 def test_check_in_rejects_a_closed_flight(plant, flight):
-    plant.book.cutoff(flight.id)
-    plant.book.mark_closed(flight.id)
+    plant.soft_cutoff(flight.id)
+    plant.hard_cutoff(flight.id)
     with pytest.raises(OrderingError):
         plant.desk.check_in("7002", flight.id)
 

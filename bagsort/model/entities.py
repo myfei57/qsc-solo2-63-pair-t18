@@ -65,6 +65,39 @@ class Flight:
 
 
 @dataclass(frozen=True)
+class CutoffMark:
+    """Baseline snapshot taken the moment a flight enters soft cut-off.
+
+    The tail-off window is measured against this mark: ``in_transit`` is how
+    many bags were still on the belt when new check-ins stopped, and
+    ``accepted`` is how many bags the flight had taken in total. Both numbers
+    are committed with the state flip, so a restart rebuilds the same window.
+    """
+
+    flight_id: str
+    began_at: str
+    in_transit: int = 0
+    accepted: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "flight_id": self.flight_id,
+            "began_at": self.began_at,
+            "in_transit": self.in_transit,
+            "accepted": self.accepted,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "CutoffMark":
+        return cls(
+            flight_id=str(raw["flight_id"]),
+            began_at=str(raw.get("began_at", "")),
+            in_transit=int(raw.get("in_transit", 0)),
+            accepted=int(raw.get("accepted", 0)),
+        )
+
+
+@dataclass(frozen=True)
 class Bag:
     id: str
     barcode: str

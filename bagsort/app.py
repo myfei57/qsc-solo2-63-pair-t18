@@ -17,11 +17,12 @@ from bagsort.errors import ConflictError
 from bagsort.events.bus import EventBus
 from bagsort.flight.book import FlightBook
 from bagsort.flight.close import FlightCloser
+from bagsort.flight.cutoff import AUDIT_KINDS, KIND_HARD, KIND_REOPENED, KIND_SOFT, CutoffManager
 from bagsort.flight.mapping import BagMapping
 from bagsort.flight.schedule import ScheduleBoard
 from bagsort.ids import IdFactory
 from bagsort.inject.injector import Injector
-from bagsort.model.entities import Bag, Flight, Reading, SortRecord
+from bagsort.model.entities import AuditEntry, Bag, CutoffMark, Flight, Reading, SortRecord
 from bagsort.model.errors import unknown_bag
 from bagsort.ns.chutes import ChuteRegistry
 from bagsort.ns.namespace import Namespace
@@ -59,6 +60,7 @@ class Plant:
     mapping: BagMapping
     schedule: ScheduleBoard
     closer: FlightCloser
+    cutoff: CutoffManager
     chutes: ChuteAssigner
     chute_history: AssignmentHistory
     sorter: Sorter
@@ -103,6 +105,7 @@ class Plant:
         quota = QuotaBook(store, clock)
         desk = Desk(store, reader, book, mapping, injector, quota, clock, handling_line())
         closer = FlightCloser(book)
+        cutoff = CutoffManager(store, book, injector, sorter, clock)
         recheck = RecheckQueue(store, book, clock)
         belt = Belt(store, clock, IdFactory("cmd"))
 
@@ -114,6 +117,9 @@ class Plant:
             "bag.diverted",
             "bag.recheck_enqueued",
             "flight.closed",
+            "flight.cutoff_soft",
+            "flight.reopened",
+            "flight.cutoff_hard",
             "chute.assigned",
             "belt.switched",
             "bag.remapped",
@@ -137,6 +143,7 @@ class Plant:
             mapping=mapping,
             schedule=schedule,
             closer=closer,
+            cutoff=cutoff,
             chutes=chutes,
             chute_history=chute_history,
             sorter=sorter,
@@ -220,6 +227,48 @@ class Plant:
         self.bus.publish("flight.closed", flight_id=flight_id)
         return flight
 
+    def soft_cutoff(self, flight_id: str) -> CutoffMark:
+        """Phase one: stop new check-ins and snapshot the in-transit tail."""
+
+        mark = self.cutoff.soft_cutoff(flight_id)
+        self.bus.publish(
+            "flight.cutoff_soft",
+            flight_id=flight_id,
+            began_at=mark.began_at,
+            in_transit=mark.in_transit,
+            accepted=mark.accepted,
+        )
+        return mark
+
+    def reopen_flight(self, flight_id: str) -> Flight:
+        """Roll soft cut-off back to open when the tail cannot be finished."""
+
+        flight = self.cutoff.reopen(flight_id)
+        self.bus.publish(
+            "flight.reopened",
+            flight_id=flight_id,
+            in_transit=self.injector.in_transit(flight_id),
+        )
+        return flight
+
+    def hard_cutoff(self, flight_id: str) -> Flight:
+        """Phase two: close the flight for good once the tail has drained."""
+
+        flight = self.cutoff.hard_cutoff(flight_id)
+        self.bus.publish(
+            "flight.cutoff_hard", flight_id=flight_id, closed_at=flight.closed_at
+        )
+        return flight
+
+    def cutoff_status(self, flight_id: str) -> dict[str, object]:
+        return self.cutoff.status(flight_id)
+
+    def cutoff_review(self, flight_id: str) -> list[AuditEntry]:
+        """The flight's cut-off audit entries, in the order they were committed."""
+
+        kinds = set(AUDIT_KINDS)
+        return [entry for entry in self.audit.for_subject(flight_id) if entry.kind in kinds]
+
     def enqueue_recheck(self, bag_id: str) -> Bag:
         bag = self.bag(bag_id)
         self.recheck.enqueue(bag)
@@ -256,6 +305,9 @@ class _AuditSubscriber:
         "bag.diverted": ("diversion", "sorter"),
         "bag.recheck_enqueued": ("recheck", "recheck"),
         "flight.closed": ("flight_close", "audit"),
+        "flight.cutoff_soft": (KIND_SOFT, "audit"),
+        "flight.reopened": (KIND_REOPENED, "audit"),
+        "flight.cutoff_hard": (KIND_HARD, "audit"),
         "chute.assigned": ("chute_assign", "chute"),
         "belt.switched": ("belt_switch", "belt"),
         "bag.remapped": ("remap", "checkin"),
