@@ -18,6 +18,7 @@ class PlantReport:
         audit: object,
         namespace: object,
         topology: object,
+        cutoff: object | None = None,
     ) -> None:
         self._store = store
         self._book = book
@@ -27,6 +28,7 @@ class PlantReport:
         self._audit = audit
         self._ns = namespace
         self._topology = topology
+        self._cutoff = cutoff
 
     def summary(self) -> dict[str, object]:
         flights = self._book.list()
@@ -36,6 +38,9 @@ class PlantReport:
             "line": list(self._topology.stages),
             "flights": len(flights),
             "open_flights": sum(1 for flight in flights if is_open_state(flight.state)),
+            "soft_cutoff_flights": sum(
+                1 for flight in flights if flight.state.value == "soft_cutoff"
+            ),
             "bags": len(bags),
             "active_bags": sum(1 for bag in bags if is_active_bag_state(bag.state)),
             "assignments": self._chutes.count(),
@@ -52,6 +57,7 @@ class PlantReport:
         rows: list[dict[str, object]] = []
         for flight in self._book.list():
             assignment = self._chutes.current(flight.id)
+            ticket = self._cutoff.ticket(flight.id) if self._cutoff is not None else None
             rows.append(
                 {
                     "id": flight.id,
@@ -64,6 +70,9 @@ class PlantReport:
                     "chute_id": assignment.chute_id if assignment else "",
                     "chute_generation": assignment.generation if assignment else 0,
                     "bags": len(self._book.list_bags_for(flight.id)),
+                    "cutoff_attempt": flight.cutoff_attempt,
+                    "cutoff_policy": flight.cutoff_chute_policy,
+                    "cutoff_ticket": ticket.status if ticket else "",
                 }
             )
         return rows

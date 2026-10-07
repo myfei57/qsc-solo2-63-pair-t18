@@ -204,6 +204,44 @@ def handle_close_flight(server, request: Request) -> Response:
     return json_response(_plant(server).close_flight(request.param("id")).as_dict())
 
 
+def handle_soft_cutoff(server, request: Request) -> Response:
+    plant = _plant(server)
+    ticket = plant.soft_cutoff(
+        request.param("id"),
+        request.str_field("policy", "original"),
+        request.str_field("winddown_chute"),
+        request.str_field("note"),
+    )
+    return json_response(ticket.as_dict(), status=201)
+
+
+def handle_hard_cutoff(server, request: Request) -> Response:
+    ticket = _plant(server).hard_cutoff(request.param("id"))
+    return json_response(ticket.as_dict())
+
+
+def handle_reopen_flight(server, request: Request) -> Response:
+    return json_response(
+        _plant(server).reopen_flight(request.param("id"), request.str_field("reason")).as_dict()
+    )
+
+
+def handle_cutoff_reconcile(server, request: Request) -> Response:
+    return json_response(_plant(server).cutoff_reconcile(request.param("id")))
+
+
+def handle_cutoff_ticket(server, request: Request) -> Response:
+    ticket = _plant(server).cutoff_ticket(request.param("id"))
+    if ticket is None:
+        return json_response({"error": "not found"}, status=404)
+    return json_response(ticket.as_dict())
+
+
+def handle_cutoff_events(server, request: Request) -> Response:
+    flight_id = request.query_str("flight") or None
+    return json_response(_plant(server).cutoff_events(flight_id))
+
+
 def handle_set_cutoff(server, request: Request) -> Response:
     flight = _plant(server).book.set_cutoff(request.param("id"), request.str_field("cutoff"))
     return json_response(flight.as_dict())

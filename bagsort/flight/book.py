@@ -77,6 +77,25 @@ class FlightBook:
             raise OrderingError(f"flight {flight_id!r} is not accepting baggage")
         return flight
 
+    def require_closable(self, flight_id: str) -> Flight:
+        """Gate the final close.
+
+        An open/boarding flight may still take the legacy drain-and-close path,
+        and a hard cut-off flight is the normal case. A flight sitting in soft
+        cut-off is refused: its wind-down must be finished with a hard cut-off
+        or walked back to open before anyone closes it.
+        """
+
+        flight = self.get(flight_id)
+        if flight.state is FlightState.SOFT_CUTOFF:
+            raise OrderingError(
+                f"flight {flight_id!r} is in soft cut-off; "
+                "finish the wind-down with a hard cut-off or reopen it before closing"
+            )
+        if flight.state is FlightState.CLOSED:
+            raise OrderingError(f"flight {flight_id!r} is already closed")
+        return flight
+
     def set_cutoff(self, flight_id: str, cutoff_at: str) -> Flight:
         flight = self.get(flight_id)
         updated = flight.evolved(cutoff_at=cutoff_at.strip())

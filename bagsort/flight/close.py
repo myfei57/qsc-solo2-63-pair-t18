@@ -3,6 +3,12 @@
 The order is the whole point. Closing first would strand bags that were already
 on the induction belt, so the closer asks the injector to drain and only then
 flags the flight closed.
+
+A flight reaches the closer from either cut-off phase. The normal path is the
+hard :data:`~bagsort.model.enums.FlightState.CUTOFF` produced by
+:class:`bagsort.flight.cutoff.CutoffControl` after reconciliation; the closer
+also still accepts a flight that was moved straight to the hard cut-off state,
+which keeps the legacy single step close operation working.
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ class Drainer(Protocol):
 class Closer(Protocol):
     """The part of the flight book the closer needs."""
 
-    def require_open(self, flight_id: str) -> Flight: ...
+    def require_closable(self, flight_id: str) -> Flight: ...
 
     def mark_closed(self, flight_id: str) -> Flight: ...
 
@@ -33,6 +39,6 @@ class FlightCloser:
         self._book = book
 
     def close(self, flight_id: str, drainer: Drainer) -> Flight:
-        self._book.require_open(flight_id)
+        self._book.require_closable(flight_id)
         drainer.drain_in_transit(flight_id)
         return self._book.mark_closed(flight_id)

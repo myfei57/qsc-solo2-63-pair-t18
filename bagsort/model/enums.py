@@ -6,10 +6,17 @@ from enum import Enum
 
 
 class FlightState(str, Enum):
-    """Lifecycle of one flight batch."""
+    """Lifecycle of one flight batch.
+
+    The cut-off is two phases. :data:`SOFT_CUTOFF` still accepts baggage at the
+    desk (the queue there is not turned away) but no new downstream commands are
+    issued; :data:`CUTOFF` is the hard stop that accepts nothing. A soft cut-off
+    may be walked back to :data:`BOARDING` while the wind-down is unfinished.
+    """
 
     OPEN = "open"
     BOARDING = "boarding"
+    SOFT_CUTOFF = "soft_cutoff"
     CUTOFF = "cutoff"
     CLOSED = "closed"
 

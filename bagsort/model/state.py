@@ -14,6 +14,7 @@ from .entities import (
     AuditEntry,
     Bag,
     ChuteAssignment,
+    CutoffTicket,
     Flight,
     LoadRecord,
     Sequence,
@@ -39,6 +40,8 @@ class State:
     counters: dict[str, int] = field(default_factory=dict)
     sequence: Sequence = field(default_factory=Sequence)
     recheck_queue: list[str] = field(default_factory=list)
+    cutoff_tickets: dict[str, CutoffTicket] = field(default_factory=dict)
+    cutoff_events: list[dict[str, Any]] = field(default_factory=list)
     belt_carousel: str = ""
     belt_batch: int = 0
     belt_on_carousel: list[str] = field(default_factory=list)
@@ -57,6 +60,8 @@ class State:
             counters=dict(self.counters),
             sequence=self.sequence,
             recheck_queue=list(self.recheck_queue),
+            cutoff_tickets=dict(self.cutoff_tickets),
+            cutoff_events=list(self.cutoff_events),
             belt_carousel=self.belt_carousel,
             belt_batch=self.belt_batch,
             belt_on_carousel=list(self.belt_on_carousel),
@@ -78,6 +83,10 @@ class State:
             "counters": dict(sorted(self.counters.items())),
             "sequence": self.sequence.as_dict(),
             "recheck_queue": list(self.recheck_queue),
+            "cutoff_tickets": {
+                key: ticket.as_dict() for key, ticket in sorted(self.cutoff_tickets.items())
+            },
+            "cutoff_events": list(self.cutoff_events),
             "belt": {
                 "carousel": self.belt_carousel,
                 "batch": self.belt_batch,
@@ -142,6 +151,39 @@ def apply_entry(state: State, kind: str, payload: dict[str, Any]) -> None:
         state.recheck_queue = [item for item in state.recheck_queue if item != bag_id]
     elif kind == "recheck.clear":
         state.recheck_queue = []
+    elif kind == "cutoff.open":
+        ticket = CutoffTicket.from_dict(payload["ticket"])
+        state.cutoff_tickets[f"{ticket.flight_id}#{ticket.attempt}"] = ticket
+        state.cutoff_events.append(_cutoff_event(kind, payload, ticket.flight_id))
+    elif kind == "cutoff.update":
+        ticket = CutoffTicket.from_dict(payload["ticket"])
+        state.cutoff_tickets[f"{ticket.flight_id}#{ticket.attempt}"] = ticket
+        state.cutoff_events.append(_cutoff_event(kind, payload, ticket.flight_id))
+    elif kind == "cutoff.advance":
+        state.cutoff_events.append(dict(payload))
+    elif kind == "cutoff.track":
+        flight_id = str(payload["flight_id"])
+        attempt = int(payload.get("attempt", 0))
+        key = f"{flight_id}#{attempt}"
+        ticket = state.cutoff_tickets.get(key)
+        if ticket is None:
+            ticket = next(
+                (
+                    state.cutoff_tickets[candidate]
+                    for candidate in sorted(state.cutoff_tickets, reverse=True)
+                    if candidate.startswith(f"{flight_id}#")
+                ),
+                None,
+            )
+        if ticket is not None:
+            bag_id = str(payload["bag_id"])
+            if bag_id not in ticket.wind_down:
+                state.cutoff_tickets[
+                    f"{flight_id}#{ticket.attempt}"
+                ] = ticket.evolved(wind_down=(*ticket.wind_down, bag_id))
+        event = dict(payload)
+        event.setdefault("kind", kind)
+        state.cutoff_events.append(event)
     elif kind == "belt.set":
         state.belt_carousel = str(payload.get("carousel", ""))
         state.belt_batch = int(payload.get("batch", 0))
@@ -164,3 +206,12 @@ def fold(entries: list[tuple[str, dict[str, Any]]]) -> State:
     for kind, payload in entries:
         apply_entry(state, kind, payload)
     return state
+
+
+def _cutoff_event(kind: str, payload: dict[str, Any], flight_id: str) -> dict[str, Any]:
+    """Normalise a ticket carrying event so it names its kind and flight."""
+
+    event = dict(payload)
+    event["kind"] = kind
+    event.setdefault("flight_id", flight_id)
+    return event

@@ -12,7 +12,7 @@ from bagsort.clock import Clock
 from bagsort.errors import OrderingError
 from bagsort.ids import IdFactory
 from bagsort.model.entities import Bag, LoadRecord, TransferCommand
-from bagsort.model.enums import BagState
+from bagsort.model.enums import BagState, FlightState
 from bagsort.model.validate import validate_transfer
 from bagsort.store.store import Store
 
@@ -88,6 +88,7 @@ class Belt:
         return self.discard_stale(self.batch())
 
     def append_transfer(self, flight_id: str, carousel: str, batch: int) -> TransferCommand:
+        self._require_commandable(flight_id)
         command = TransferCommand(
             id=self._ids.next(),
             flight_id=flight_id.strip(),
@@ -102,6 +103,20 @@ class Belt:
                 "transfer.append", {"command": command.as_dict()}, self._clock.now_iso()
             )
         return command
+
+    def _require_commandable(self, flight_id: str) -> None:
+        """A soft or hard cut-off issues no new downstream transfer commands."""
+
+        flight = self._store.state().flights.get(flight_id)
+        if flight is not None and flight.state in (
+            FlightState.SOFT_CUTOFF,
+            FlightState.CUTOFF,
+            FlightState.CLOSED,
+        ):
+            raise OrderingError(
+                f"flight {flight_id!r} is in {flight.state.value}; "
+                "no new transfer command may be issued after cut-off"
+            )
 
     def transfers(self) -> list[TransferCommand]:
         return list(self._store.state().transfer_commands)

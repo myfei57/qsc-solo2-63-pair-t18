@@ -42,7 +42,21 @@ def validate_transfer(command: TransferCommand) -> TransferCommand:
 
 
 def is_open_state(state: FlightState) -> bool:
-    return state in (FlightState.OPEN, FlightState.BOARDING)
+    """Whether the desk may still accept baggage for the flight.
+
+    A soft cut-off keeps accepting while the wind-down runs; only the hard
+    cut-off and the closed state turn the desk away.
+    """
+
+    return state in (
+        FlightState.OPEN,
+        FlightState.BOARDING,
+        FlightState.SOFT_CUTOFF,
+    )
+
+
+def is_soft_cutoff_state(state: FlightState) -> bool:
+    return state is FlightState.SOFT_CUTOFF
 
 
 def is_active_bag_state(state: BagState) -> bool:

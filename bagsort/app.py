@@ -17,6 +17,7 @@ from bagsort.errors import ConflictError
 from bagsort.events.bus import EventBus
 from bagsort.flight.book import FlightBook
 from bagsort.flight.close import FlightCloser
+from bagsort.flight.cutoff import POLICY_ORIGINAL, CutoffControl
 from bagsort.flight.mapping import BagMapping
 from bagsort.flight.schedule import ScheduleBoard
 from bagsort.ids import IdFactory
@@ -59,6 +60,7 @@ class Plant:
     mapping: BagMapping
     schedule: ScheduleBoard
     closer: FlightCloser
+    cutoff: CutoffControl
     chutes: ChuteAssigner
     chute_history: AssignmentHistory
     sorter: Sorter
@@ -101,7 +103,10 @@ class Plant:
         sorter = Sorter(store, mapping, chutes, clock, VerdictTracker())
         injector = Injector(store, book, sorter, clock)
         quota = QuotaBook(store, clock)
-        desk = Desk(store, reader, book, mapping, injector, quota, clock, handling_line())
+        cutoff = CutoffControl(store, book, chutes, clock)
+        desk = Desk(
+            store, reader, book, mapping, injector, quota, clock, handling_line(), cutoff
+        )
         closer = FlightCloser(book)
         recheck = RecheckQueue(store, book, clock)
         belt = Belt(store, clock, IdFactory("cmd"))
@@ -114,6 +119,9 @@ class Plant:
             "bag.diverted",
             "bag.recheck_enqueued",
             "flight.closed",
+            "flight.soft_cutoff",
+            "flight.hard_cutoff",
+            "flight.reopened",
             "chute.assigned",
             "belt.switched",
             "bag.remapped",
@@ -121,7 +129,7 @@ class Plant:
             bus.subscribe(topic, audit_subscriber)
 
         report = PlantReport(
-            store, book, chutes, belt, quota, audit, namespace, handling_line()
+            store, book, chutes, belt, quota, audit, namespace, handling_line(), cutoff
         )
         return cls(
             store=store,
@@ -137,6 +145,7 @@ class Plant:
             mapping=mapping,
             schedule=schedule,
             closer=closer,
+            cutoff=cutoff,
             chutes=chutes,
             chute_history=chute_history,
             sorter=sorter,
@@ -220,6 +229,56 @@ class Plant:
         self.bus.publish("flight.closed", flight_id=flight_id)
         return flight
 
+    def soft_cutoff(
+        self,
+        flight_id: str,
+        policy: str = POLICY_ORIGINAL,
+        winddown_chute_id: str = "",
+        note: str = "",
+    ):
+        """Begin the soft cut-off: keep accepting, freeze new commands."""
+
+        ticket = self.cutoff.soft_cutoff(flight_id, policy, winddown_chute_id, note)
+        self.bus.publish(
+            "flight.soft_cutoff",
+            flight_id=flight_id,
+            attempt=ticket.attempt,
+            policy=ticket.policy,
+            winddown_chute_id=ticket.winddown_chute_id,
+            wind_down=len(ticket.wind_down),
+        )
+        return ticket
+
+    def hard_cutoff(self, flight_id: str):
+        """Finish the wind-down and lock the desk."""
+
+        ticket = self.cutoff.hard_cutoff(flight_id)
+        self.bus.publish(
+            "flight.hard_cutoff",
+            flight_id=flight_id,
+            attempt=ticket.attempt,
+            policy=ticket.policy,
+            wind_down=len(ticket.wind_down),
+            settled=len(ticket.settled),
+        )
+        return ticket
+
+    def reopen_flight(self, flight_id: str, reason: str = "") -> Flight:
+        """Walk an unfinished soft cut-off back to boarding."""
+
+        flight = self.cutoff.reopen(flight_id, reason)
+        self.bus.publish("flight.reopened", flight_id=flight_id, reason=reason)
+        return flight
+
+    def cutoff_reconcile(self, flight_id: str) -> dict:
+        return self.cutoff.reconcile(flight_id)
+
+    def cutoff_ticket(self, flight_id: str):
+        return self.cutoff.ticket(flight_id)
+
+    def cutoff_events(self, flight_id: str | None = None) -> list[dict]:
+        return self.cutoff.events(flight_id)
+
     def enqueue_recheck(self, bag_id: str) -> Bag:
         bag = self.bag(bag_id)
         self.recheck.enqueue(bag)
@@ -255,7 +314,10 @@ class _AuditSubscriber:
         "bag.sorted": ("sort", "sorter"),
         "bag.diverted": ("diversion", "sorter"),
         "bag.recheck_enqueued": ("recheck", "recheck"),
-        "flight.closed": ("flight_close", "audit"),
+        "flight.closed": ("flight_close", "hard_cutoff"),
+        "flight.soft_cutoff": ("soft_cutoff", "soft_cutoff"),
+        "flight.hard_cutoff": ("hard_cutoff", "hard_cutoff"),
+        "flight.reopened": ("cutoff_reopen", "soft_cutoff"),
         "chute.assigned": ("chute_assign", "chute"),
         "belt.switched": ("belt_switch", "belt"),
         "bag.remapped": ("remap", "checkin"),

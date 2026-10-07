@@ -30,6 +30,9 @@ class Flight:
     schedule_generation: int = 1
     cutoff_at: str = ""
     closed_at: str = ""
+    cutoff_attempt: int = 0
+    cutoff_chute_policy: str = ""
+    cutoff_chute_id: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -43,6 +46,9 @@ class Flight:
             "schedule_generation": self.schedule_generation,
             "cutoff_at": self.cutoff_at,
             "closed_at": self.closed_at,
+            "cutoff_attempt": self.cutoff_attempt,
+            "cutoff_chute_policy": self.cutoff_chute_policy,
+            "cutoff_chute_id": self.cutoff_chute_id,
         }
 
     @classmethod
@@ -58,6 +64,9 @@ class Flight:
             schedule_generation=int(raw.get("schedule_generation", 1)),
             cutoff_at=str(raw.get("cutoff_at", "")),
             closed_at=str(raw.get("closed_at", "")),
+            cutoff_attempt=int(raw.get("cutoff_attempt", 0)),
+            cutoff_chute_policy=str(raw.get("cutoff_chute_policy", "")),
+            cutoff_chute_id=str(raw.get("cutoff_chute_id", "")),
         )
 
     def evolved(self, **changes: Any) -> "Flight":
@@ -283,3 +292,74 @@ class AuditEntry:
             digest=str(raw.get("digest", "")),
             at=str(raw.get("at", "")),
         )
+
+
+@dataclass(frozen=True)
+class CutoffTicket:
+    """The recoverable record of one soft -> hard cut-off attempt.
+
+    ``wind_down`` is the item-by-item list of every bag still in transit when
+    the soft cut-off began plus every bag accepted while the soft cut-off ran.
+    ``settled`` holds the members observed in a terminal state when the wind-down
+    was checked. ``status`` is ``open`` while the wind-down runs, ``hard`` once
+    the hard cut-off has landed, and ``withdrawn`` when the soft cut-off was
+    walked back to boarding.
+    """
+
+    flight_id: str
+    attempt: int
+    policy: str
+    winddown_chute_id: str = ""
+    original_chute_id: str = ""
+    original_generation: int = 0
+    wind_down: tuple[str, ...] = ()
+    settled: tuple[str, ...] = ()
+    status: str = "open"
+    opened_at: str = ""
+    closed_at: str = ""
+    note: str = ""
+    cost: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "flight_id": self.flight_id,
+            "attempt": self.attempt,
+            "policy": self.policy,
+            "winddown_chute_id": self.winddown_chute_id,
+            "original_chute_id": self.original_chute_id,
+            "original_generation": self.original_generation,
+            "wind_down": list(self.wind_down),
+            "settled": list(self.settled),
+            "status": self.status,
+            "opened_at": self.opened_at,
+            "closed_at": self.closed_at,
+            "note": self.note,
+            "cost": _clean(self.cost),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "CutoffTicket":
+        return cls(
+            flight_id=str(raw["flight_id"]),
+            attempt=int(raw.get("attempt", 0)),
+            policy=str(raw.get("policy", "")),
+            winddown_chute_id=str(raw.get("winddown_chute_id", "")),
+            original_chute_id=str(raw.get("original_chute_id", "")),
+            original_generation=int(raw.get("original_generation", 0)),
+            wind_down=tuple(str(item) for item in raw.get("wind_down", [])),
+            settled=tuple(str(item) for item in raw.get("settled", [])),
+            status=str(raw.get("status", "open")),
+            opened_at=str(raw.get("opened_at", "")),
+            closed_at=str(raw.get("closed_at", "")),
+            note=str(raw.get("note", "")),
+            cost=_clean(raw.get("cost", {})),
+        )
+
+    def evolved(self, **changes: Any) -> "CutoffTicket":
+        return replace(self, **changes)
+
+    @property
+    def outstanding(self) -> tuple[str, ...]:
+        """Wind-down members not yet observed in a terminal state."""
+
+        return tuple(bag_id for bag_id in self.wind_down if bag_id not in self.settled)
